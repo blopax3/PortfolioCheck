@@ -1,0 +1,5 @@
+quantstats==0.0.81
+pandas>=2.2,<3
+numpy>=1.26,<3
+matplotlib>=3.8,<4
+yfinance>=0.2.40,<1
