@@ -132,6 +132,7 @@ Notes:
 - Asset and benchmark names are resolved from Morningstar or Yahoo Finance when available. The API still accepts `name` as a compatibility fallback.
 - Weights can be sent as percentages (`50`) or decimals (`0.5`).
 - If Morningstar resolution is unavailable, the backend falls back to Yahoo Finance.
+- Monte Carlo uses 126 trading sessions and 1,000 simulations by default.
 - The response includes the generated HTML report, summary metrics, data sources used for each asset, and fallback warnings.
 
 ## Repository Hygiene

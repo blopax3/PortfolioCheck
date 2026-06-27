@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+DEFAULT_MONTE_CARLO_SIMULATIONS = 1000
+
+
 @dataclass(frozen=True)
 class AssetInput:
     name: str
@@ -20,7 +23,7 @@ class BenchmarkInput:
 @dataclass(frozen=True)
 class MonteCarloConfig:
     sessions: int = 126
-    simulations: int = 200
+    simulations: int = DEFAULT_MONTE_CARLO_SIMULATIONS
     seed: int = 42
     goal: float = 0.05
     bust: float = -0.10
@@ -109,7 +112,7 @@ def parse_payload(payload: dict[str, Any]) -> AnalysisInput:
     raw_monte_carlo = payload.get("monteCarlo") if isinstance(payload.get("monteCarlo"), dict) else {}
     monte_carlo = MonteCarloConfig(
         sessions=int(raw_monte_carlo.get("sessions") or 126),
-        simulations=int(raw_monte_carlo.get("simulations") or 200),
+        simulations=int(raw_monte_carlo.get("simulations") or DEFAULT_MONTE_CARLO_SIMULATIONS),
         seed=int(raw_monte_carlo.get("seed") or 42),
         goal=float(raw_monte_carlo.get("goal") or 0.05),
         bust=float(raw_monte_carlo.get("bust") or -0.10),
