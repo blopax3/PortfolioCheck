@@ -4,7 +4,7 @@ PortfolioCheck is a Next.js and Python application for portfolio analysis. It le
 
 ## Features
 
-- Portfolio editor with asset names, ISINs or tickers, and percentage weights.
+- Portfolio editor with ISINs or tickers and percentage weights.
 - Browser-based saved portfolios using `localStorage`.
 - Optional benchmark configuration.
 - Morningstar lookup for known ISINs and Yahoo Finance fallback for tickers.
@@ -113,13 +113,11 @@ Example request:
 {
   "assets": [
     {
-      "name": "Example Fund",
       "symbol": "ES0112611001",
       "weight": 50
     }
   ],
   "benchmark": {
-    "name": "Benchmark",
     "symbol": "SGLD.MI"
   },
   "startDate": "2015-01-01",
@@ -131,6 +129,7 @@ Example request:
 Notes:
 
 - `symbol` can be a real ISIN or a Yahoo Finance ticker.
+- Asset and benchmark names are resolved from Morningstar or Yahoo Finance when available. The API still accepts `name` as a compatibility fallback.
 - Weights can be sent as percentages (`50`) or decimals (`0.5`).
 - If Morningstar resolution is unavailable, the backend falls back to Yahoo Finance.
 - The response includes the generated HTML report, summary metrics, data sources used for each asset, and fallback warnings.

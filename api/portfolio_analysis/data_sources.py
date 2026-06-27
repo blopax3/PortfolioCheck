@@ -12,6 +12,7 @@ MORNINGSTAR_ENDPOINT = (
     "https://tools.morningstar.es/api/rest.svc/"
     "timeseries_price/t92wz0sj7c"
 )
+YAHOO_SEARCH_ENDPOINT = "https://query1.finance.yahoo.com/v1/finance/search"
 MORNINGSTAR_ID_SUFFIX = "]2]0]FOEUR$$ALL"
 
 MORNINGSTAR_SYMBOL_MAP = {
@@ -30,10 +31,60 @@ class ReturnSeries:
     returns: pd.Series
     source: str
     symbol: str
+    name: str
     warning: str | None = None
 
 
-def _request_morningstar(identifier: str, idtype: str, start: str, end: str | None, currency: str) -> pd.Series:
+def _extract_morningstar_name(payload: dict, fallback: str) -> str:
+    try:
+        security = payload["TimeSeries"]["Security"][0]
+    except (KeyError, IndexError, TypeError):
+        return fallback
+
+    for key in ("Name", "LegalName", "SecurityName", "SecName"):
+        value = security.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return fallback
+
+
+def _resolve_yahoo_search_name(query: str) -> str | None:
+    params = {
+        "q": query,
+        "quotesCount": 5,
+        "newsCount": 0,
+    }
+    url = f"{YAHOO_SEARCH_ENDPOINT}?{urlencode(params)}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+
+    try:
+        with urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+    except Exception:
+        return None
+
+    quotes = payload.get("quotes")
+    if not isinstance(quotes, list):
+        return None
+
+    for quote in quotes:
+        if not isinstance(quote, dict):
+            continue
+        for key in ("longname", "shortname", "displayName", "symbol"):
+            value = quote.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _request_morningstar(
+    identifier: str,
+    idtype: str,
+    start: str,
+    end: str | None,
+    currency: str,
+    fallback_name: str,
+) -> tuple[pd.Series, str]:
     params = {
         "currencyId": currency,
         "idtype": idtype,
@@ -49,7 +100,8 @@ def _request_morningstar(identifier: str, idtype: str, start: str, end: str | No
         payload = json.load(response)
 
     try:
-        history = payload["TimeSeries"]["Security"][0]["HistoryDetail"]
+        security = payload["TimeSeries"]["Security"][0]
+        history = security["HistoryDetail"]
     except (KeyError, IndexError, TypeError) as error:
         raise ValueError("Respuesta de Morningstar invalida.") from error
 
@@ -64,7 +116,7 @@ def _request_morningstar(identifier: str, idtype: str, start: str, end: str | No
         prices = prices.loc[: pd.Timestamp(end)]
     if prices.empty:
         raise ValueError("Morningstar devolvio una serie vacia.")
-    return prices
+    return prices, _extract_morningstar_name(payload, fallback_name)
 
 
 def _morningstar_candidates(identifier: str) -> list[tuple[str, str]]:
@@ -97,27 +149,43 @@ def looks_like_morningstar_id(symbol: str) -> bool:
     return clean.startswith(("0P", "F0", "F000"))
 
 
-def download_morningstar_returns(identifier: str, start: str, end: str | None, currency: str) -> pd.Series:
+def download_morningstar_returns(identifier: str, start: str, end: str | None, currency: str) -> tuple[pd.Series, str]:
     errors: list[str] = []
     for morningstar_id, idtype in _morningstar_candidates(identifier):
         try:
-            prices = _request_morningstar(morningstar_id, idtype, start, end, currency)
+            prices, name = _request_morningstar(morningstar_id, idtype, start, end, currency, identifier)
             returns = prices.pct_change(fill_method=None).dropna()
             if returns.empty:
                 raise ValueError("Serie de retornos vacia.")
-            returns.name = identifier
-            return returns
+            if name == identifier:
+                name = _resolve_yahoo_search_name(identifier) or name
+            returns.name = name
+            return returns, name
         except Exception as error:
             errors.append(f"{idtype}: {error}")
     raise ValueError("; ".join(errors))
 
 
-def download_yahoo_returns(symbol: str, start: str, end: str | None) -> pd.Series:
+def _resolve_yahoo_name(ticker: yf.Ticker, symbol: str) -> str:
+    try:
+        info = ticker.get_info() or {}
+    except Exception:
+        info = {}
+
+    for key in ("longName", "shortName", "displayName", "symbol"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return symbol
+
+
+def download_yahoo_returns(symbol: str, start: str, end: str | None) -> tuple[pd.Series, str]:
     yf_end = None
     if end is not None:
         yf_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-    history = yf.Ticker(symbol).history(
+    ticker = yf.Ticker(symbol)
+    history = ticker.history(
         start=pd.Timestamp(start).strftime("%Y-%m-%d"),
         end=yf_end,
         auto_adjust=True,
@@ -132,10 +200,11 @@ def download_yahoo_returns(symbol: str, start: str, end: str | None) -> pd.Serie
     returns = prices.pct_change(fill_method=None).dropna()
     if end is not None:
         returns = returns.loc[: pd.Timestamp(end)]
-    returns.name = symbol
+    name = _resolve_yahoo_name(ticker, symbol)
+    returns.name = name
     if returns.empty:
         raise ValueError(f"Yahoo Finance no devolvio datos para {symbol}.")
-    return returns
+    return returns, name
 
 
 def download_returns(
@@ -146,27 +215,34 @@ def download_returns(
     label: str,
 ) -> ReturnSeries:
     clean_symbol = symbol.strip().upper()
+    clean_label = label.strip()
     if not clean_symbol:
         raise ValueError(f"{label} necesita ISIN o ticker Yahoo.")
 
     if clean_symbol in MORNINGSTAR_SYMBOL_MAP or looks_like_isin(clean_symbol) or looks_like_morningstar_id(clean_symbol):
         try:
-            returns = download_morningstar_returns(clean_symbol, start, end, currency)
-            returns.name = label
-            return ReturnSeries(returns=returns, source="morningstar", symbol=clean_symbol)
+            returns, resolved_name = download_morningstar_returns(clean_symbol, start, end, currency)
+            name = resolved_name or clean_label or clean_symbol
+            returns.name = name
+            return ReturnSeries(returns=returns, source="morningstar", symbol=clean_symbol, name=name)
         except Exception as morningstar_error:
             if looks_like_morningstar_id(clean_symbol):
                 raise ValueError(
                     f"No se pudieron descargar datos de {label} desde Morningstar. Introduce un ISIN o ticker Yahoo valido."
                 ) from morningstar_error
             warning = f"Morningstar fallo para {label}; se uso Yahoo Finance con {clean_symbol}."
-            returns = download_yahoo_returns(clean_symbol, start, end).rename(label)
+            returns, resolved_name = download_yahoo_returns(clean_symbol, start, end)
+            name = resolved_name or clean_label or clean_symbol
+            returns = returns.rename(name)
             return ReturnSeries(
                 returns=returns,
                 source="yahoo",
                 symbol=clean_symbol,
+                name=name,
                 warning=warning,
             )
 
-    returns = download_yahoo_returns(clean_symbol, start, end).rename(label)
-    return ReturnSeries(returns=returns, source="yahoo", symbol=clean_symbol)
+    returns, resolved_name = download_yahoo_returns(clean_symbol, start, end)
+    name = resolved_name or clean_label or clean_symbol
+    returns = returns.rename(name)
+    return ReturnSeries(returns=returns, source="yahoo", symbol=clean_symbol, name=name)

@@ -242,17 +242,12 @@ h2 {
 }
 
 .panel-title,
-.toggle-row,
 .actions,
 .panel-footer {
   display: flex;
   gap: 12px;
   align-items: center;
   justify-content: space-between;
-}
-
-.toggle-row {
-  margin-bottom: 14px;
 }
 
 .fields {
@@ -267,19 +262,6 @@ label {
   font-size: 0.76rem;
   font-weight: 650;
   letter-spacing: 0.015em;
-}
-
-.switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-}
-
-.switch-label input {
-  width: auto;
-  min-height: 0;
-  accent-color: var(--accent);
 }
 
 .btn {
@@ -603,7 +585,6 @@ label {
   }
 
   .panel-title,
-  .toggle-row,
   .panel-footer {
     align-items: flex-start;
     flex-direction: column;

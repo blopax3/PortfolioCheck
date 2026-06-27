@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Asset = {
   id: string;
-  name: string;
   symbol: string;
   weight: string;
 };
@@ -39,7 +38,7 @@ type SavedPortfolio = {
 const STORAGE_KEY = "portfoliocheck.savedPortfolios.v1";
 
 const initialAssets: Asset[] = [
-  { id: "1", name: "", symbol: "", weight: "" }
+  { id: "1", symbol: "", weight: "" }
 ];
 
 function parseWeight(value: string) {
@@ -83,7 +82,6 @@ function normalizeSavedPortfolio(value: unknown): SavedPortfolio | null {
           }
 
           return {
-            name: typeof item.name === "string" ? item.name.trim() : "",
             symbol,
             weight: typeof item.weight === "string" ? item.weight.trim() : String(item.weight ?? "0")
           };
@@ -111,8 +109,6 @@ export default function Home() {
   const [portfolioNotice, setPortfolioNotice] = useState("");
   const [startDate, setStartDate] = useState("2015-01-01");
   const [endDate, setEndDate] = useState("");
-  const [benchmarkEnabled, setBenchmarkEnabled] = useState(false);
-  const [benchmarkName, setBenchmarkName] = useState("");
   const [benchmarkSymbol, setBenchmarkSymbol] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState("");
@@ -161,7 +157,7 @@ export default function Home() {
   function addAsset() {
     setAssets((current) => [
       ...current,
-      { id: makeId(), name: "", symbol: "", weight: "0" }
+      { id: makeId(), symbol: "", weight: "0" }
     ]);
   }
 
@@ -172,7 +168,6 @@ export default function Home() {
   function savePortfolio() {
     const cleanAssets = assets
       .map((asset) => ({
-        name: asset.name.trim(),
         symbol: asset.symbol.trim(),
         weight: asset.weight.trim() || "0"
       }))
@@ -266,14 +261,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           assets: assets.map((asset) => ({
-            name: asset.name,
             symbol: asset.symbol,
             weight: parseWeight(asset.weight) / 100
           })),
-          benchmark: benchmarkEnabled
+          benchmark: benchmarkSymbol.trim()
             ? {
-                name: benchmarkName,
-                symbol: benchmarkSymbol
+                symbol: benchmarkSymbol.trim()
               }
             : null,
           startDate,
@@ -414,33 +407,14 @@ export default function Home() {
           </section>
 
           <section className="panel-section">
-            <div className="toggle-row">
-              <div className="panel-section__header panel-section__header--compact">
-                <h2>Benchmark</h2>
-                <p>Comparador opcional para el informe.</p>
-              </div>
-              <label className="switch-label">
-                <input
-                  type="checkbox"
-                  checked={benchmarkEnabled}
-                  onChange={(event) => setBenchmarkEnabled(event.target.checked)}
-                />
-                Usar
-              </label>
+            <div className="panel-section__header">
+              <h2>Benchmark</h2>
+              <p>Comparador opcional para el informe. Se usara si introduces un ISIN o ticker.</p>
             </div>
             <div className="fields">
               <label>
-                Nombre
-                <input
-                  disabled={!benchmarkEnabled}
-                  value={benchmarkName}
-                  onChange={(event) => setBenchmarkName(event.target.value)}
-                />
-              </label>
-              <label>
                 ISIN o ticker Yahoo
                 <input
-                  disabled={!benchmarkEnabled}
                   value={benchmarkSymbol}
                   onChange={(event) => setBenchmarkSymbol(event.target.value)}
                 />
@@ -465,7 +439,6 @@ export default function Home() {
               <table>
                 <thead>
                   <tr>
-                    <th>Nombre</th>
                     <th>ISIN o ticker Yahoo</th>
                     <th>Peso %</th>
                     <th />
@@ -474,13 +447,6 @@ export default function Home() {
                 <tbody>
                   {assets.map((asset) => (
                     <tr key={asset.id}>
-                      <td>
-                        <input
-                          value={asset.name}
-                          onChange={(event) => updateAsset(asset.id, "name", event.target.value)}
-                          placeholder="Nombre"
-                        />
-                      </td>
                       <td>
                         <input
                           value={asset.symbol}
@@ -502,7 +468,7 @@ export default function Home() {
                           className="icon-button"
                           onClick={() => removeAsset(asset.id)}
                           title="Eliminar activo"
-                          aria-label={`Eliminar ${asset.name || asset.symbol || "activo"}`}
+                          aria-label={`Eliminar ${asset.symbol || "activo"}`}
                         >
                           x
                         </button>
