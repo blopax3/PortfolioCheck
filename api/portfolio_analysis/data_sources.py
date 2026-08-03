@@ -9,7 +9,7 @@ import pandas as pd
 import yfinance as yf
 
 MORNINGSTAR_ENDPOINT = (
-    "https://tools.morningstar.es/api/rest.svc/"
+    "https://lt.morningstar.com/api/rest.svc/"
     "timeseries_price/t92wz0sj7c"
 )
 YAHOO_SEARCH_ENDPOINT = "https://query1.finance.yahoo.com/v1/finance/search"
