@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,18 +13,12 @@ MORNINGSTAR_ENDPOINT = (
     "https://lt.morningstar.com/api/rest.svc/"
     "timeseries_price/t92wz0sj7c"
 )
-YAHOO_SEARCH_ENDPOINT = "https://query1.finance.yahoo.com/v1/finance/search"
-MORNINGSTAR_ID_SUFFIX = "]2]0]FOEUR$$ALL"
-
-MORNINGSTAR_SYMBOL_MAP = {
-    "ES0112611001": "0P00016YQ5.F",
-    "ES0146309002": "0P0001DFE8.F",
-    "IE00BFZMJT78": "0P0001FAME.F",
-    "IE0007471927": "F0GBR04SGO",
-    "ES0140794001": "F000016XFK",
-    "IE00B79S1F56": "0P0000VHGM.F",
-    "DI4C.F": "0P00000B50.F",
-}
+MORNINGSTAR_SEARCH_ENDPOINT = (
+    "https://lt.morningstar.com/api/rest.svc/t92wz0sj7c/security/screener"
+)
+MORNINGSTAR_UNIVERSES = ("FOEUR$$ALL", "FOESP$$ALL", "FOGBR$$ALL")
+ISIN_PATTERN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
+YAHOO_SYMBOL_PATTERN = re.compile(r"[A-Z0-9^][A-Z0-9.^=-]{0,31}")
 
 
 @dataclass(frozen=True)
@@ -35,63 +30,73 @@ class ReturnSeries:
     warning: str | None = None
 
 
-def _extract_morningstar_name(payload: dict, fallback: str) -> str:
-    try:
-        security = payload["TimeSeries"]["Security"][0]
-    except (KeyError, IndexError, TypeError):
-        return fallback
+def normalize_isin(value: object) -> str:
+    clean = value.strip().upper() if isinstance(value, str) else ""
+    if not ISIN_PATTERN.fullmatch(clean):
+        return ""
+    digits = "".join(str(int(character, 36)) for character in clean)
+    total = sum(
+        (digit * 2 // 10 + digit * 2 % 10) if index % 2 else digit
+        for index, digit in enumerate(map(int, reversed(digits)))
+    )
+    return clean if total % 10 == 0 else ""
 
-    for key in ("Name", "LegalName", "SecurityName", "SecName"):
-        value = security.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return fallback
+
+def normalize_yahoo_symbol(value: object) -> str:
+    clean = value.strip().upper() if isinstance(value, str) else ""
+    return clean if YAHOO_SYMBOL_PATTERN.fullmatch(clean) else ""
 
 
-def _resolve_yahoo_search_name(query: str) -> str | None:
+def _search_morningstar(isin: str) -> list[tuple[str, str]]:
     params = {
-        "q": query,
-        "quotesCount": 5,
-        "newsCount": 0,
+        "page": 1,
+        "pageSize": 100,
+        "outputType": "json",
+        "version": 1,
+        "languageId": "es-ES",
+        "universeIds": "|".join(MORNINGSTAR_UNIVERSES),
+        "securityDataPoints": "SecId,Name,ISIN",
+        "filters": f"ISIN:EQ:{isin}",
     }
-    url = f"{YAHOO_SEARCH_ENDPOINT}?{urlencode(params)}"
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    request = Request(
+        f"{MORNINGSTAR_SEARCH_ENDPOINT}?{urlencode(params)}",
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.morningstar.es/"},
+    )
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
 
-    try:
-        with urlopen(request, timeout=15) as response:
-            payload = json.load(response)
-    except Exception:
-        return None
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("Respuesta del buscador de Morningstar invalida.")
 
-    quotes = payload.get("quotes")
-    if not isinstance(quotes, list):
-        return None
-
-    for quote in quotes:
-        if not isinstance(quote, dict):
+    candidates: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or normalize_isin(row.get("ISIN")) != isin:
             continue
-        for key in ("longname", "shortname", "displayName", "symbol"):
-            value = quote.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return None
+        secid = row.get("SecId")
+        if isinstance(secid, str) and secid.strip() and secid not in seen:
+            seen.add(secid)
+            candidates.append((secid.strip(), str(row.get("Name") or isin)))
+    if not candidates:
+        raise ValueError(f"Morningstar no encontro una coincidencia exacta para {isin}.")
+    return candidates
 
 
 def _request_morningstar(
-    identifier: str,
-    idtype: str,
+    secid: str,
+    universe: str,
     start: str,
     end: str | None,
     currency: str,
-    fallback_name: str,
-) -> tuple[pd.Series, str]:
+) -> pd.Series:
     params = {
         "currencyId": currency,
-        "idtype": idtype,
+        "idtype": "Morningstar",
         "frequency": "daily",
         "outputType": "JSON",
         "startDate": pd.Timestamp(start).strftime("%Y-%m-%d"),
-        "id": identifier,
+        "id": f"{secid}]2]0]{universe}",
     }
     url = f"{MORNINGSTAR_ENDPOINT}?{urlencode(params)}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -108,7 +113,7 @@ def _request_morningstar(
     prices = pd.Series(
         data=[float(record["Value"]) for record in history],
         index=pd.to_datetime([record["EndDate"] for record in history]),
-        name=identifier,
+        name=secid,
         dtype=float,
     ).sort_index()
     prices = prices[~prices.index.duplicated(keep="last")].dropna()
@@ -116,53 +121,26 @@ def _request_morningstar(
         prices = prices.loc[: pd.Timestamp(end)]
     if prices.empty:
         raise ValueError("Morningstar devolvio una serie vacia.")
-    return prices, _extract_morningstar_name(payload, fallback_name)
-
-
-def _morningstar_candidates(identifier: str) -> list[tuple[str, str]]:
-    clean = identifier.strip().upper()
-    candidates: list[tuple[str, str]] = []
-    mapped_identifier = MORNINGSTAR_SYMBOL_MAP.get(clean)
-    if mapped_identifier:
-        candidates.append((f"{mapped_identifier}{MORNINGSTAR_ID_SUFFIX}", "Morningstar"))
-    if len(clean) == 12 and clean[:2].isalpha():
-        candidates.append((clean, "ISIN"))
-    candidates.append((f"{clean}{MORNINGSTAR_ID_SUFFIX}", "Morningstar"))
-    candidates.append((clean, "Morningstar"))
-
-    deduped: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for candidate in candidates:
-        if candidate not in seen:
-            deduped.append(candidate)
-            seen.add(candidate)
-    return deduped
+    return prices
 
 
 def looks_like_isin(symbol: str) -> bool:
-    clean = symbol.strip().upper()
-    return len(clean) == 12 and clean[:2].isalpha() and clean[2:].isalnum()
-
-
-def looks_like_morningstar_id(symbol: str) -> bool:
-    clean = symbol.strip().upper()
-    return clean.startswith(("0P", "F0", "F000"))
+    return bool(normalize_isin(symbol))
 
 
 def download_morningstar_returns(identifier: str, start: str, end: str | None, currency: str) -> tuple[pd.Series, str]:
     errors: list[str] = []
-    for morningstar_id, idtype in _morningstar_candidates(identifier):
-        try:
-            prices, name = _request_morningstar(morningstar_id, idtype, start, end, currency, identifier)
-            returns = prices.pct_change(fill_method=None).dropna()
-            if returns.empty:
-                raise ValueError("Serie de retornos vacia.")
-            if name == identifier:
-                name = _resolve_yahoo_search_name(identifier) or name
-            returns.name = name
-            return returns, name
-        except Exception as error:
-            errors.append(f"{idtype}: {error}")
+    for secid, name in _search_morningstar(identifier):
+        for universe in MORNINGSTAR_UNIVERSES:
+            try:
+                prices = _request_morningstar(secid, universe, start, end, currency)
+                returns = prices.pct_change(fill_method=None).dropna()
+                if returns.empty:
+                    raise ValueError("Serie de retornos vacia.")
+                returns.name = name
+                return returns, name
+            except Exception as error:
+                errors.append(f"{secid} ({universe}): {error}")
     raise ValueError("; ".join(errors))
 
 
@@ -219,30 +197,24 @@ def download_returns(
     if not clean_symbol:
         raise ValueError(f"{label} necesita ISIN o ticker Yahoo.")
 
-    if clean_symbol in MORNINGSTAR_SYMBOL_MAP or looks_like_isin(clean_symbol) or looks_like_morningstar_id(clean_symbol):
+    if ISIN_PATTERN.fullmatch(clean_symbol) and not looks_like_isin(clean_symbol):
+        raise ValueError(f"El ISIN de {label} no es valido.")
+
+    if looks_like_isin(clean_symbol):
         try:
             returns, resolved_name = download_morningstar_returns(clean_symbol, start, end, currency)
             name = resolved_name or clean_label or clean_symbol
             returns.name = name
             return ReturnSeries(returns=returns, source="morningstar", symbol=clean_symbol, name=name)
         except Exception as morningstar_error:
-            if looks_like_morningstar_id(clean_symbol):
-                raise ValueError(
-                    f"No se pudieron descargar datos de {label} desde Morningstar. Introduce un ISIN o ticker Yahoo valido."
-                ) from morningstar_error
-            warning = f"Morningstar fallo para {label}; se uso Yahoo Finance con {clean_symbol}."
-            returns, resolved_name = download_yahoo_returns(clean_symbol, start, end)
-            name = resolved_name or clean_label or clean_symbol
-            returns = returns.rename(name)
-            return ReturnSeries(
-                returns=returns,
-                source="yahoo",
-                symbol=clean_symbol,
-                name=name,
-                warning=warning,
-            )
+            raise ValueError(
+                f"No se pudieron descargar datos de {label} desde Morningstar."
+            ) from morningstar_error
 
-    returns, resolved_name = download_yahoo_returns(clean_symbol, start, end)
+    yahoo_symbol = normalize_yahoo_symbol(clean_symbol)
+    if not yahoo_symbol:
+        raise ValueError(f"{label} necesita un ISIN o ticker Yahoo valido.")
+    returns, resolved_name = download_yahoo_returns(yahoo_symbol, start, end)
     name = resolved_name or clean_label or clean_symbol
     returns = returns.rename(name)
-    return ReturnSeries(returns=returns, source="yahoo", symbol=clean_symbol, name=name)
+    return ReturnSeries(returns=returns, source="yahoo", symbol=yahoo_symbol, name=name)

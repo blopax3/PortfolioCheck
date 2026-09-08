@@ -7,7 +7,7 @@ PortfolioCheck is a Next.js and Python application for portfolio analysis. It le
 - Portfolio editor with ISINs or tickers and percentage weights.
 - Browser-based saved portfolios using `localStorage`.
 - Optional benchmark configuration.
-- Morningstar lookup for known ISINs and Yahoo Finance fallback for tickers.
+- Exact ISIN lookup through Morningstar and direct Yahoo Finance lookup for tickers.
 - QuantStats HTML report generation from a Python serverless API.
 - Vercel-ready project structure with a Next.js frontend and Python API route.
 
@@ -131,7 +131,7 @@ Notes:
 - `symbol` can be a real ISIN or a Yahoo Finance ticker.
 - Asset and benchmark names are resolved from Morningstar or Yahoo Finance when available. The API still accepts `name` as a compatibility fallback.
 - Weights can be sent as percentages (`50`) or decimals (`0.5`).
-- If Morningstar resolution is unavailable, the backend falls back to Yahoo Finance.
+- Valid ISINs are resolved through Morningstar; Yahoo symbols are sent directly to Yahoo Finance.
 - Monte Carlo uses 126 trading sessions and 1,000 simulations by default.
 - The response includes the generated HTML report, summary metrics, data sources used for each asset, and fallback warnings.
 
