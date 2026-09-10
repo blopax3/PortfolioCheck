@@ -4,6 +4,7 @@ import base64
 import html
 import os
 import tempfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -168,9 +169,81 @@ def _monte_carlo_section(returns, config, summary, chart: str) -> str:
     """
 
 
-def _insert_section(html: str, section: str) -> str:
+def _report_header(config, assets: list[dict[str, str]], returns) -> str:
+    benchmark = next((asset for asset in assets if asset.get("weight") == "benchmark"), None)
+    benchmark_name = benchmark["name"] if benchmark else "Sin benchmark"
+    asset_count = sum(asset.get("weight") != "benchmark" for asset in assets)
+
+    return f"""
+    <header class="pc-report-header">
+      <p class="pc-brand">PortfolioCheck</p>
+      <h1>Informe de rentabilidad y riesgo</h1>
+      <p class="pc-report-intro">Resumen histórico de la cartera, riesgo y escenarios probabilísticos.</p>
+      <dl class="pc-report-meta">
+        <div><dt>Periodo</dt><dd>{returns.index[0]:%d/%m/%Y} — {returns.index[-1]:%d/%m/%Y}</dd></div>
+        <div><dt>Benchmark</dt><dd>{_escape(benchmark_name)}</dd></div>
+        <div><dt>Moneda</dt><dd>{_escape(config.currency)}</dd></div>
+        <div><dt>Composición</dt><dd>{asset_count} activo{'s' if asset_count != 1 else ''}</dd></div>
+        <div><dt>Sesiones/año</dt><dd>252</dd></div>
+        <div><dt>Tipo sin riesgo</dt><dd>0,00 %</dd></div>
+      </dl>
+    </header>
+    """
+
+
+def _report_footer() -> str:
+    generated = datetime.now().astimezone().strftime("%d/%m/%Y")
+    return f"""
+    <footer class="pc-report-footer">
+      <p>Resultados históricos; no constituyen asesoramiento financiero.</p>
+      <p>Generado el {generated} con <a href="https://quantstats.io">QuantStats</a> v. {_escape(qs.__version__)}.</p>
+    </footer>
+    """
+
+
+def _insert_section(html: str, header: str, section: str, footer: str) -> str:
     styles = """
     <style>
+      body {
+        background: #eef3f8;
+        color: #243b53;
+      }
+      .container > h1,
+      .container > h4 { display: none; }
+      .pc-report-header {
+        box-sizing: border-box;
+        margin: 0 auto 28px;
+        padding: 32px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #073b66, #0b67a3);
+        box-shadow: 0 12px 30px rgba(7, 59, 102, .18);
+        color: white;
+      }
+      .pc-brand {
+        margin: 0 0 8px;
+        color: #9ed8ff;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+      .pc-report-header h1 { margin: 0; font-size: 30px; font-weight: 700; }
+      .pc-report-intro { margin: 8px 0 24px; color: #d9efff; font-size: 14px; }
+      .pc-report-meta {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 0;
+      }
+      .pc-report-meta div {
+        min-width: 0;
+        padding: 11px 12px;
+        border: 1px solid rgba(255,255,255,.2);
+        border-radius: 7px;
+        background: rgba(255,255,255,.08);
+      }
+      .pc-report-meta dt { color: #9ed8ff; font-size: 10px; text-transform: uppercase; }
+      .pc-report-meta dd { overflow-wrap: anywhere; margin: 3px 0 0; font-weight: 700; }
       .montecarlo {
         box-sizing: border-box;
         margin: 28px auto 36px;
@@ -180,6 +253,7 @@ def _insert_section(html: str, section: str) -> str:
         border: 1px solid #d9e2ec;
         border-radius: 8px;
         background: #f8fbff;
+        box-shadow: 0 8px 24px rgba(36, 59, 83, .08);
         page-break-after: always;
       }
       .montecarlo h2 { margin: 0 0 10px; color: #084594; }
@@ -192,6 +266,7 @@ def _insert_section(html: str, section: str) -> str:
         border: 1px solid #d9e2ec;
         border-radius: 8px;
         background: #ffffff;
+        box-shadow: 0 8px 24px rgba(36, 59, 83, .08);
       }
       .portfolio-input h2 { margin: 0 0 10px; color: #084594; }
       .pc-period { margin: 0 0 16px; color: #52606d; }
@@ -238,7 +313,30 @@ def _insert_section(html: str, section: str) -> str:
       .mc-grid span { margin-top: 6px; font-size: 20px; color: #084594; }
       .mc-chart { display: block; width: 100%; max-width: 1050px; margin: 10px auto; }
       .mc-note { font-size: 11px; color: #52606d; }
+      .pc-report-footer {
+        clear: both;
+        max-width: 960px;
+        margin: 36px auto 0;
+        padding: 20px 0;
+        border-top: 1px solid #bcccdc;
+        color: #627d98;
+        font-size: 11px;
+      }
+      .pc-report-footer p { margin: 3px 0; }
+      .pc-report-footer a { color: #0b67a3; }
       svg, img { max-width: 100%; }
+      @media (max-width: 720px) {
+        body { margin: 12px; }
+        .pc-report-header { padding: 24px 20px; }
+        .pc-report-meta { grid-template-columns: repeat(2, 1fr); }
+        .portfolio-input, .montecarlo { width: 100%; padding: 20px; }
+        .pc-table { display: block; overflow-x: auto; }
+        .mc-grid { grid-template-columns: 1fr; }
+      }
+      @media print {
+        body { background: white; }
+        .pc-report-header, .portfolio-input, .montecarlo { box-shadow: none; }
+      }
     </style>
     """
     html = html.replace("</head>", f"{styles}</head>", 1)
@@ -246,7 +344,10 @@ def _insert_section(html: str, section: str) -> str:
     if position == -1:
         body_position = html.find("<body>")
         position = body_position + len("<body>") if body_position != -1 else 0
-    return html[:position] + section + html[position:]
+        html = html[:position] + header + section + html[position:]
+    else:
+        html = html[:position] + header + "<hr>" + section + html[position + len("<hr>") :]
+    return html.replace("</body>", f"{footer}</body>", 1)
 
 
 def _quantstats_html(returns, benchmark) -> str:
@@ -267,9 +368,15 @@ def analyze_portfolio(payload: dict) -> dict:
     html = _quantstats_html(returns, benchmark)
     monte_carlo_result, monte_carlo_summary = _simulate_monte_carlo(returns, config.monte_carlo)
     chart = _monte_carlo_chart(monte_carlo_result)
+    header = _report_header(config, assets, returns)
     initial_section = _portfolio_section(config, assets)
     monte_carlo_section = _monte_carlo_section(returns, config.monte_carlo, monte_carlo_summary, chart)
-    html = _insert_section(html, initial_section + monte_carlo_section)
+    html = _insert_section(
+        html,
+        header,
+        initial_section + monte_carlo_section,
+        _report_footer(),
+    )
 
     return {
         "html": html,
