@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { parsePortfolioFile, PortfolioFile } from "./portfolio-file";
 
 type Asset = {
   id: string;
@@ -31,6 +32,10 @@ type SavedPortfolio = {
   id: string;
   name: string;
   assets: Omit<Asset, "id">[];
+  benchmarkSymbol: string;
+  startDate: string;
+  endDate: string;
+  currency: "EUR";
   createdAt: string;
   updatedAt: string;
 };
@@ -97,6 +102,10 @@ function normalizeSavedPortfolio(value: unknown): SavedPortfolio | null {
     id: typeof candidate.id === "string" ? candidate.id : makeId(),
     name,
     assets,
+    benchmarkSymbol: typeof candidate.benchmarkSymbol === "string" ? candidate.benchmarkSymbol.trim() : "",
+    startDate: typeof candidate.startDate === "string" ? candidate.startDate : "2015-01-01",
+    endDate: typeof candidate.endDate === "string" ? candidate.endDate : "",
+    currency: "EUR",
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : new Date().toISOString(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date().toISOString()
   };
@@ -107,6 +116,7 @@ export default function Home() {
   const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([]);
   const [portfolioName, setPortfolioName] = useState("");
   const [portfolioNotice, setPortfolioNotice] = useState("");
+  const [portfolioNoticeError, setPortfolioNoticeError] = useState(false);
   const [startDate, setStartDate] = useState("2015-01-01");
   const [endDate, setEndDate] = useState("");
   const [benchmarkSymbol, setBenchmarkSymbol] = useState("");
@@ -140,11 +150,14 @@ export default function Home() {
   }, []);
 
   function persistPortfolios(next: SavedPortfolio[]) {
-    setSavedPortfolios(next);
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setSavedPortfolios(next);
+      return true;
     } catch {
       setPortfolioNotice("No se pudo guardar en este navegador.");
+      setPortfolioNoticeError(true);
+      return false;
     }
   }
 
@@ -175,6 +188,7 @@ export default function Home() {
 
     if (!cleanAssets.length) {
       setPortfolioNotice("Introduce al menos un ISIN o ticker antes de guardar.");
+      setPortfolioNoticeError(true);
       return;
     }
 
@@ -188,6 +202,10 @@ export default function Home() {
       id: existingIndex >= 0 ? next[existingIndex].id : makeId(),
       name: cleanName,
       assets: cleanAssets,
+      benchmarkSymbol: benchmarkSymbol.trim(),
+      startDate,
+      endDate,
+      currency: "EUR",
       createdAt: existingIndex >= 0 ? next[existingIndex].createdAt : now,
       updatedAt: now
     };
@@ -198,9 +216,11 @@ export default function Home() {
       next.unshift(record);
     }
 
-    persistPortfolios(next);
-    setPortfolioName(cleanName);
-    setPortfolioNotice(`Portfolio "${cleanName}" guardado en este navegador.`);
+    if (persistPortfolios(next)) {
+      setPortfolioName(cleanName);
+      setPortfolioNotice(`Portfolio "${cleanName}" guardado en este navegador.`);
+      setPortfolioNoticeError(false);
+    }
   }
 
   function loadPortfolio(portfolio: SavedPortfolio) {
@@ -211,26 +231,90 @@ export default function Home() {
       }))
     );
     setPortfolioName(portfolio.name);
+    setBenchmarkSymbol(portfolio.benchmarkSymbol);
+    setStartDate(portfolio.startDate);
+    setEndDate(portfolio.endDate);
     setResult(null);
     setError("");
     setPortfolioNotice(`Portfolio "${portfolio.name}" cargado.`);
+    setPortfolioNoticeError(false);
   }
 
   function deletePortfolio(id: string) {
     const selected = savedPortfolios.find((portfolio) => portfolio.id === id);
-    persistPortfolios(savedPortfolios.filter((portfolio) => portfolio.id !== id));
-    setPortfolioNotice(selected ? `Portfolio "${selected.name}" eliminado.` : "");
+    if (persistPortfolios(savedPortfolios.filter((portfolio) => portfolio.id !== id))) {
+      setPortfolioNotice(selected ? `Portfolio "${selected.name}" eliminado.` : "");
+      setPortfolioNoticeError(false);
+    }
+  }
+
+  function downloadFile(contents: string, type: string, filename: string) {
+    const url = URL.createObjectURL(new Blob([contents], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadPortfolio() {
+    const candidate: PortfolioFile = {
+      version: 1,
+      name: portfolioName.trim() || `Portfolio ${new Date().toLocaleDateString("es-ES")}`,
+      assets: assets.map((asset) => ({
+        symbol: asset.symbol.trim(),
+        weight: Number(asset.weight.replace(",", "."))
+      })),
+      benchmark: benchmarkSymbol.trim() ? { symbol: benchmarkSymbol.trim() } : null,
+      period: { startDate, endDate: endDate || null },
+      currency: "EUR"
+    };
+
+    try {
+      const portfolio = parsePortfolioFile(JSON.stringify(candidate));
+      const filename = `${portfolio.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "portfolio"}.json`;
+      downloadFile(JSON.stringify(portfolio, null, 2), "application/json;charset=utf-8", filename);
+      setPortfolioName(portfolio.name);
+      setPortfolioNotice(`Cartera "${portfolio.name}" descargada.`);
+      setPortfolioNoticeError(false);
+    } catch (fileError) {
+      setPortfolioNotice(fileError instanceof Error ? fileError.message : "No se pudo descargar la cartera.");
+      setPortfolioNoticeError(true);
+    }
+  }
+
+  async function importPortfolio(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    try {
+      if (file.size > 1_000_000) throw new Error("El archivo JSON no puede superar 1 MB.");
+      const portfolio = parsePortfolioFile(await file.text());
+      setAssets(portfolio.assets.map((asset) => ({
+        id: makeId(),
+        symbol: asset.symbol,
+        weight: String(asset.weight)
+      })));
+      setPortfolioName(portfolio.name);
+      setBenchmarkSymbol(portfolio.benchmark?.symbol || "");
+      setStartDate(portfolio.period.startDate);
+      setEndDate(portfolio.period.endDate || "");
+      setResult(null);
+      setError("");
+      setPortfolioNotice(`Cartera "${portfolio.name}" cargada desde JSON.`);
+      setPortfolioNoticeError(false);
+    } catch (fileError) {
+      setPortfolioNotice(fileError instanceof Error ? fileError.message : "No se pudo cargar el archivo.");
+      setPortfolioNoticeError(true);
+    } finally {
+      input.value = "";
+    }
   }
 
   function downloadReport() {
     if (!result) return;
-    const blob = new Blob([result.html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "portfoliocheck-report.html";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadFile(result.html, "text/html;charset=utf-8", "portfoliocheck-report.html");
   }
 
   function openReport(html: string) {
@@ -357,6 +441,16 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="portfolio-file-actions" aria-label="Importar o exportar cartera">
+              <label className="btn btn--secondary file-button">
+                Cargar JSON
+                <input type="file" accept=".json,application/json" onChange={importPortfolio} />
+              </label>
+              <button type="button" className="btn btn--secondary" onClick={downloadPortfolio}>
+                Descargar cartera
+              </button>
+            </div>
+
             <div className="portfolio-list" data-empty={savedPortfolios.length ? "false" : "true"}>
               {savedPortfolios.length ? (
                 savedPortfolios.map((portfolio) => (
@@ -386,7 +480,11 @@ export default function Home() {
               )}
             </div>
 
-            {portfolioNotice && <p className="inline-notice">{portfolioNotice}</p>}
+            {portfolioNotice && (
+              <p className={`inline-notice${portfolioNoticeError ? " inline-notice--error" : ""}`} role="status">
+                {portfolioNotice}
+              </p>
+            )}
           </section>
 
           <section className="panel-section">
@@ -449,6 +547,7 @@ export default function Home() {
                     <tr key={asset.id}>
                       <td>
                         <input
+                          className="symbol"
                           value={asset.symbol}
                           onChange={(event) => updateAsset(asset.id, "symbol", event.target.value)}
                           placeholder="ES0112611001 o SGLD.MI"

@@ -5,7 +5,8 @@ PortfolioCheck is a Next.js and Python application for portfolio analysis. It le
 ## Features
 
 - Portfolio editor with ISINs or tickers and percentage weights.
-- Browser-based saved portfolios using `localStorage`.
+- Browser-based saved portfolios using `localStorage`, including benchmark and period.
+- Import and export of complete portfolio configurations as versioned JSON files.
 - Optional benchmark configuration.
 - Exact ISIN lookup through Morningstar and direct Yahoo Finance lookup for tickers.
 - QuantStats HTML report generation from a Python serverless API.
@@ -102,6 +103,26 @@ POST /api/analyze
 ```
 
 `vercel.json` sets a 60-second maximum duration for `api/analyze.py`.
+
+## Portfolio JSON
+
+The browser can import and export portable portfolio configurations with this format:
+
+```json
+{
+  "version": 1,
+  "name": "Permanent portfolio",
+  "assets": [
+    { "symbol": "ES0112611001", "weight": 60 },
+    { "symbol": "SGLD.MI", "weight": 40 }
+  ],
+  "benchmark": { "symbol": "^STOXX50E" },
+  "period": { "startDate": "2015-01-01", "endDate": null },
+  "currency": "EUR"
+}
+```
+
+Imported weights must be numeric percentages that add up to 100. Loading a file fills the editor without saving or starting an analysis.
 
 ## API
 
