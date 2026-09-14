@@ -22,20 +22,22 @@ class DataSourcesTest(unittest.TestCase):
     @patch("api.portfolio_analysis.data_sources.download_morningstar_returns")
     def test_isins_use_morningstar_and_symbols_use_yahoo(self, morningstar, yahoo):
         series = pd.Series([0.01], index=pd.to_datetime(["2025-01-02"]))
-        morningstar.return_value = (series, "Fund")
-        yahoo.return_value = (series, "ETF")
+        morningstar.return_value = (series, "Fund", "EUR")
+        yahoo.return_value = (series, "ETF", "USD")
 
-        isin_result = download_returns("IE00B4L5Y983", "2025-01-01", None, "EUR", "Fund")
-        symbol_result = download_returns("VWCE.DE", "2025-01-01", None, "EUR", "ETF")
+        isin_result = download_returns("IE00B4L5Y983", "2025-01-01", None, "Fund")
+        symbol_result = download_returns("VWCE.DE", "2025-01-01", None, "ETF")
 
         self.assertIsInstance(isin_result, ReturnSeries)
         self.assertEqual(isin_result.source, "morningstar")
+        self.assertEqual(isin_result.currency, "EUR")
         self.assertEqual(symbol_result.source, "yahoo")
+        self.assertEqual(symbol_result.currency, "USD")
         yahoo.assert_called_once_with("VWCE.DE", "2025-01-01", None)
 
     def test_invalid_isin_check_digit_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "ISIN"):
-            download_returns("IE00B4L5Y984", "2025-01-01", None, "EUR", "Fund")
+            download_returns("IE00B4L5Y984", "2025-01-01", None, "Fund")
 
 
 if __name__ == "__main__":

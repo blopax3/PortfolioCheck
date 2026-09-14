@@ -27,6 +27,7 @@ class ReturnSeries:
     source: str
     symbol: str
     name: str
+    currency: str
     warning: str | None = None
 
 
@@ -47,7 +48,7 @@ def normalize_yahoo_symbol(value: object) -> str:
     return clean if YAHOO_SYMBOL_PATTERN.fullmatch(clean) else ""
 
 
-def _search_morningstar(isin: str) -> list[tuple[str, str]]:
+def _search_morningstar(isin: str) -> list[tuple[str, str, str]]:
     params = {
         "page": 1,
         "pageSize": 100,
@@ -55,7 +56,7 @@ def _search_morningstar(isin: str) -> list[tuple[str, str]]:
         "version": 1,
         "languageId": "es-ES",
         "universeIds": "|".join(MORNINGSTAR_UNIVERSES),
-        "securityDataPoints": "SecId,Name,ISIN",
+        "securityDataPoints": "SecId,Name,ISIN,PriceCurrency",
         "filters": f"ISIN:EQ:{isin}",
     }
     request = Request(
@@ -69,7 +70,7 @@ def _search_morningstar(isin: str) -> list[tuple[str, str]]:
     if not isinstance(rows, list):
         raise ValueError("Respuesta del buscador de Morningstar invalida.")
 
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for row in rows:
         if not isinstance(row, dict) or normalize_isin(row.get("ISIN")) != isin:
@@ -77,7 +78,13 @@ def _search_morningstar(isin: str) -> list[tuple[str, str]]:
         secid = row.get("SecId")
         if isinstance(secid, str) and secid.strip() and secid not in seen:
             seen.add(secid)
-            candidates.append((secid.strip(), str(row.get("Name") or isin)))
+            candidates.append(
+                (
+                    secid.strip(),
+                    str(row.get("Name") or isin),
+                    str(row.get("PriceCurrency") or "").strip().upper(),
+                )
+            )
     if not candidates:
         raise ValueError(f"Morningstar no encontro una coincidencia exacta para {isin}.")
     return candidates
@@ -128,9 +135,9 @@ def looks_like_isin(symbol: str) -> bool:
     return bool(normalize_isin(symbol))
 
 
-def download_morningstar_returns(identifier: str, start: str, end: str | None, currency: str) -> tuple[pd.Series, str]:
+def download_morningstar_returns(identifier: str, start: str, end: str | None) -> tuple[pd.Series, str, str]:
     errors: list[str] = []
-    for secid, name in _search_morningstar(identifier):
+    for secid, name, currency in _search_morningstar(identifier):
         for universe in MORNINGSTAR_UNIVERSES:
             try:
                 prices = _request_morningstar(secid, universe, start, end, currency)
@@ -138,13 +145,13 @@ def download_morningstar_returns(identifier: str, start: str, end: str | None, c
                 if returns.empty:
                     raise ValueError("Serie de retornos vacia.")
                 returns.name = name
-                return returns, name
+                return returns, name, currency
             except Exception as error:
                 errors.append(f"{secid} ({universe}): {error}")
     raise ValueError("; ".join(errors))
 
 
-def _resolve_yahoo_name(ticker: yf.Ticker, symbol: str) -> str:
+def _resolve_yahoo_metadata(ticker: yf.Ticker, symbol: str) -> tuple[str, str]:
     try:
         info = ticker.get_info() or {}
     except Exception:
@@ -153,11 +160,11 @@ def _resolve_yahoo_name(ticker: yf.Ticker, symbol: str) -> str:
     for key in ("longName", "shortName", "displayName", "symbol"):
         value = info.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
-    return symbol
+            return value.strip(), str(info.get("currency") or "").strip().upper()
+    return symbol, str(info.get("currency") or "").strip().upper()
 
 
-def download_yahoo_returns(symbol: str, start: str, end: str | None) -> tuple[pd.Series, str]:
+def download_yahoo_returns(symbol: str, start: str, end: str | None) -> tuple[pd.Series, str, str]:
     yf_end = None
     if end is not None:
         yf_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
@@ -178,18 +185,17 @@ def download_yahoo_returns(symbol: str, start: str, end: str | None) -> tuple[pd
     returns = prices.pct_change(fill_method=None).dropna()
     if end is not None:
         returns = returns.loc[: pd.Timestamp(end)]
-    name = _resolve_yahoo_name(ticker, symbol)
+    name, currency = _resolve_yahoo_metadata(ticker, symbol)
     returns.name = name
     if returns.empty:
         raise ValueError(f"Yahoo Finance no devolvio datos para {symbol}.")
-    return returns, name
+    return returns, name, currency
 
 
 def download_returns(
     symbol: str,
     start: str,
     end: str | None,
-    currency: str,
     label: str,
 ) -> ReturnSeries:
     clean_symbol = symbol.strip().upper()
@@ -202,10 +208,10 @@ def download_returns(
 
     if looks_like_isin(clean_symbol):
         try:
-            returns, resolved_name = download_morningstar_returns(clean_symbol, start, end, currency)
+            returns, resolved_name, currency = download_morningstar_returns(clean_symbol, start, end)
             name = resolved_name or clean_label or clean_symbol
             returns.name = name
-            return ReturnSeries(returns=returns, source="morningstar", symbol=clean_symbol, name=name)
+            return ReturnSeries(returns=returns, source="morningstar", symbol=clean_symbol, name=name, currency=currency)
         except Exception as morningstar_error:
             raise ValueError(
                 f"No se pudieron descargar datos de {label} desde Morningstar."
@@ -214,7 +220,7 @@ def download_returns(
     yahoo_symbol = normalize_yahoo_symbol(clean_symbol)
     if not yahoo_symbol:
         raise ValueError(f"{label} necesita un ISIN o ticker Yahoo valido.")
-    returns, resolved_name = download_yahoo_returns(yahoo_symbol, start, end)
+    returns, resolved_name, currency = download_yahoo_returns(yahoo_symbol, start, end)
     name = resolved_name or clean_label or clean_symbol
     returns = returns.rename(name)
-    return ReturnSeries(returns=returns, source="yahoo", symbol=yahoo_symbol, name=name)
+    return ReturnSeries(returns=returns, source="yahoo", symbol=yahoo_symbol, name=name, currency=currency)

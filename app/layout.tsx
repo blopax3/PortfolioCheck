@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PortfolioCheck",
-  description: "Analisis de portfolios con Morningstar, Yahoo Finance y QuantStats"
+  description: "Análisis de carteras con Morningstar, Yahoo Finance y QuantStats"
 };
 
 export default function RootLayout({

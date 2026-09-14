@@ -11,6 +11,7 @@ API_DIR = ROOT_DIR / "api"
 sys.path.append(str(API_DIR))
 
 from portfolio_analysis.report import analyze_portfolio
+from portfolio_analysis.models import MAX_REQUEST_BYTES
 
 
 class LocalAnalyzeHandler(BaseHTTPRequestHandler):
@@ -35,6 +36,8 @@ class LocalAnalyzeHandler(BaseHTTPRequestHandler):
 
         try:
             content_length = int(self.headers.get("content-length", "0"))
+            if not 0 <= content_length <= MAX_REQUEST_BYTES:
+                raise ValueError("La peticion es demasiado grande.")
             raw_body = self.rfile.read(content_length)
             payload = json.loads(raw_body.decode("utf-8") or "{}")
             self._send_json(200, analyze_portfolio(payload))

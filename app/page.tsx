@@ -13,6 +13,7 @@ type ApiAsset = {
   name: string;
   symbol: string;
   source: string;
+  currency: string;
   weight: string;
 };
 
@@ -35,7 +36,6 @@ type SavedPortfolio = {
   benchmarkSymbol: string;
   startDate: string;
   endDate: string;
-  currency: "EUR";
   createdAt: string;
   updatedAt: string;
 };
@@ -57,6 +57,10 @@ function percent(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(value);
+}
+
+function formatWeight(value: number) {
+  return value.toLocaleString("es-ES", { maximumFractionDigits: 2 });
 }
 
 function makeId() {
@@ -105,7 +109,6 @@ function normalizeSavedPortfolio(value: unknown): SavedPortfolio | null {
     benchmarkSymbol: typeof candidate.benchmarkSymbol === "string" ? candidate.benchmarkSymbol.trim() : "",
     startDate: typeof candidate.startDate === "string" ? candidate.startDate : "2015-01-01",
     endDate: typeof candidate.endDate === "string" ? candidate.endDate : "",
-    currency: "EUR",
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : new Date().toISOString(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date().toISOString()
   };
@@ -162,12 +165,14 @@ export default function Home() {
   }
 
   function updateAsset(id: string, field: keyof Asset, value: string) {
+    setError("");
     setAssets((current) =>
       current.map((asset) => (asset.id === id ? { ...asset, [field]: value } : asset))
     );
   }
 
   function addAsset() {
+    setError("");
     setAssets((current) => [
       ...current,
       { id: makeId(), symbol: "", weight: "0" }
@@ -175,6 +180,7 @@ export default function Home() {
   }
 
   function removeAsset(id: string) {
+    setError("");
     setAssets((current) => current.filter((asset) => asset.id !== id));
   }
 
@@ -192,7 +198,7 @@ export default function Home() {
       return;
     }
 
-    const cleanName = portfolioName.trim() || `Portfolio ${new Date().toLocaleDateString("es-ES")}`;
+    const cleanName = portfolioName.trim() || `Cartera ${new Date().toLocaleDateString("es-ES")}`;
     const now = new Date().toISOString();
     const existingIndex = savedPortfolios.findIndex(
       (portfolio) => portfolio.name.toLowerCase() === cleanName.toLowerCase()
@@ -205,7 +211,6 @@ export default function Home() {
       benchmarkSymbol: benchmarkSymbol.trim(),
       startDate,
       endDate,
-      currency: "EUR",
       createdAt: existingIndex >= 0 ? next[existingIndex].createdAt : now,
       updatedAt: now
     };
@@ -218,7 +223,7 @@ export default function Home() {
 
     if (persistPortfolios(next)) {
       setPortfolioName(cleanName);
-      setPortfolioNotice(`Portfolio "${cleanName}" guardado en este navegador.`);
+      setPortfolioNotice(`Cartera "${cleanName}" guardada en este navegador.`);
       setPortfolioNoticeError(false);
     }
   }
@@ -236,14 +241,14 @@ export default function Home() {
     setEndDate(portfolio.endDate);
     setResult(null);
     setError("");
-    setPortfolioNotice(`Portfolio "${portfolio.name}" cargado.`);
+    setPortfolioNotice(`Cartera "${portfolio.name}" cargada.`);
     setPortfolioNoticeError(false);
   }
 
   function deletePortfolio(id: string) {
     const selected = savedPortfolios.find((portfolio) => portfolio.id === id);
     if (persistPortfolios(savedPortfolios.filter((portfolio) => portfolio.id !== id))) {
-      setPortfolioNotice(selected ? `Portfolio "${selected.name}" eliminado.` : "");
+      setPortfolioNotice(selected ? `Cartera "${selected.name}" eliminada.` : "");
       setPortfolioNoticeError(false);
     }
   }
@@ -260,14 +265,13 @@ export default function Home() {
   function downloadPortfolio() {
     const candidate: PortfolioFile = {
       version: 1,
-      name: portfolioName.trim() || `Portfolio ${new Date().toLocaleDateString("es-ES")}`,
+      name: portfolioName.trim() || `Cartera ${new Date().toLocaleDateString("es-ES")}`,
       assets: assets.map((asset) => ({
         symbol: asset.symbol.trim(),
         weight: Number(asset.weight.replace(",", "."))
       })),
       benchmark: benchmarkSymbol.trim() ? { symbol: benchmarkSymbol.trim() } : null,
-      period: { startDate, endDate: endDate || null },
-      currency: "EUR"
+      period: { startDate, endDate: endDate || null }
     };
 
     try {
@@ -333,8 +337,16 @@ export default function Home() {
     setError("");
     setResult(null);
 
+    if (!assets.length || assets.some((asset) => !asset.symbol.trim() || parseWeight(asset.weight) <= 0)) {
+      setError("Todos los activos necesitan un ISIN o ticker y un peso mayor que 0.");
+      return;
+    }
+    if (!startDate || (endDate && endDate < startDate)) {
+      setError("El periodo seleccionado no es válido.");
+      return;
+    }
     if (!isWeightValid) {
-      setError(`Los pesos deben sumar 100%. Ahora suman ${totalWeight.toFixed(2)}%.`);
+      setError(`Los pesos deben sumar 100 %. Ahora suman ${formatWeight(totalWeight)} %.`);
       return;
     }
 
@@ -344,9 +356,10 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: portfolioName.trim() || "Cartera",
           assets: assets.map((asset) => ({
             symbol: asset.symbol,
-            weight: parseWeight(asset.weight) / 100
+            weight: parseWeight(asset.weight)
           })),
           benchmark: benchmarkSymbol.trim()
             ? {
@@ -354,8 +367,7 @@ export default function Home() {
               }
             : null,
           startDate,
-          endDate: endDate || null,
-          currency: "EUR"
+          endDate: endDate || null
         })
       });
       const responseText = await response.text();
@@ -367,7 +379,7 @@ export default function Home() {
       } else {
         const preview = responseText.replace(/\s+/g, " ").slice(0, 180);
         throw new Error(
-          `/api/analyze no devolvio JSON. Arranca el proyecto con "npm run dev" para usar la API Python local, no con "npm run dev:next". Respuesta: ${preview}`
+          `/api/analyze no devolvió JSON. Arranca el proyecto con "npm run dev" para usar la API Python local, no con "npm run dev:next". Respuesta: ${preview}`
         );
       }
 
@@ -390,35 +402,190 @@ export default function Home() {
         <header className="workspace__header">
           <h1>PortfolioCheck</h1>
           <p className="workspace__subtitle">
-            Analisis de portfolios con Morningstar, Yahoo Finance y QuantStats.
+            Construye tu cartera y genera un informe histórico de su comportamiento.
           </p>
         </header>
-
-        <dl className="workspace__summary" aria-label="Resumen del portfolio">
-          <div className="workspace__summary-item">
-            <dt>Activos</dt>
-            <dd>{assets.length}</dd>
-          </div>
-          <div className="workspace__summary-item">
-            <dt>Peso total</dt>
-            <dd>{totalWeight.toFixed(2)}%</dd>
-          </div>
-          <div className="workspace__summary-item">
-            <dt>Guardados</dt>
-            <dd>{savedPortfolios.length}</dd>
-          </div>
-        </dl>
       </section>
 
       <form className="workspace__content" onSubmit={submit}>
+        <section className="analysis-column">
+          <section className="panel-section">
+            <div className="panel-title">
+              <div className="panel-section__header panel-section__header--compact">
+                <h2>Cartera</h2>
+                <p>Añade los activos y asigna un peso a cada uno. El total debe sumar 100 %.</p>
+              </div>
+              <div
+                className={`weight ${isWeightValid ? "ok" : error ? "error" : "pending"}`}
+                aria-live="polite"
+              >
+                <span>Total</span>
+                {formatWeight(totalWeight)} %
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ISIN o ticker</th>
+                    <th>Peso (%)</th>
+                    <th><span className="sr-only">Acciones</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assets.map((asset) => (
+                    <tr key={asset.id}>
+                      <td>
+                        <input
+                          className="symbol"
+                          value={asset.symbol}
+                          onChange={(event) => updateAsset(asset.id, "symbol", event.target.value)}
+                          placeholder="ES0112611001 o SGLD.MI"
+                          required
+                          aria-label={`ISIN o ticker de ${asset.symbol || "activo nuevo"}`}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="number"
+                          value={asset.weight}
+                          onChange={(event) => updateAsset(asset.id, "weight", event.target.value)}
+                          inputMode="decimal"
+                          type="number"
+                          min="0.01"
+                          max="100"
+                          step="any"
+                          required
+                          aria-label={`Peso porcentual de ${asset.symbol || "activo"}`}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={() => removeAsset(asset.id)}
+                          title="Eliminar activo"
+                          aria-label={`Eliminar ${asset.symbol || "activo"}`}
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="panel-footer">
+              <button type="button" className="btn btn--secondary" onClick={addAsset} disabled={assets.length >= 20}>
+                Añadir activo
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={loading}>
+                {loading ? "Generando informe…" : "Generar informe"}
+              </button>
+            </div>
+          </section>
+
+          {error && <div className="message error-message">{error}</div>}
+
+          {result && (
+            <section className="results">
+              <div className="summary-bar">
+                <div>
+                  <span>Periodo</span>
+                  <strong>
+                    {result.summary.startDate} – {result.summary.endDate}
+                  </strong>
+                </div>
+                <div>
+                  <span>Sesiones</span>
+                  <strong>{result.summary.sessions}</strong>
+                </div>
+                <div>
+                  <span>Monte Carlo mediana</span>
+                  <strong>{percent(result.summary.monteCarlo.p50)}</strong>
+                </div>
+              </div>
+
+              {result.warnings.length > 0 && (
+                <div className="message warning-message">
+                  {result.warnings.map((warning) => (
+                    <p key={warning}>{warning}</p>
+                  ))}
+                </div>
+              )}
+
+              <div className="source-list">
+                {result.assets.map((asset) => (
+                  <span key={`${asset.name}-${asset.weight}`}>
+                    {asset.name}: {asset.source} · {asset.currency}
+                  </span>
+                ))}
+              </div>
+
+              <div className="message report-message">
+                Informe generado. Si el navegador no lo ha abierto, utiliza el botón «Abrir informe».
+              </div>
+
+              <div className="actions">
+                <button type="button" className="btn btn--secondary" onClick={downloadReport}>
+                  Descargar HTML
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  disabled={!reportUrl}
+                  onClick={() => reportUrl && window.open(reportUrl, "_blank", "noopener,noreferrer")}
+                >
+                  Abrir informe
+                </button>
+              </div>
+            </section>
+          )}
+        </section>
+
         <aside className="control-rail">
-          <section className="panel-section portfolio-controls" aria-label="Portfolios guardados">
+          <section className="panel-section">
+            <div className="panel-section__header">
+              <h2>Periodo</h2>
+              <p>Define el rango histórico que se usará para generar el informe.</p>
+            </div>
+            <div className="fields fields--dates">
+              <label>
+                Fecha inicial
+                <input type="date" required max={endDate || undefined} value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              </label>
+              <label>
+                Fecha final
+                <input type="date" min={startDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              </label>
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <div className="panel-section__header">
+              <h2>Benchmark</h2>
+              <p>Comparador opcional. Se usará si introduces un ISIN o ticker.</p>
+            </div>
+            <div className="fields">
+              <label>
+                ISIN o ticker
+                <input
+                  value={benchmarkSymbol}
+                  onChange={(event) => setBenchmarkSymbol(event.target.value)}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="panel-section portfolio-controls" aria-label="Carteras guardadas">
             <div className="panel-section__header panel-section__header--compact">
               <div className="portfolio-controls__header">
-                <strong>Portfolios guardados</strong>
+                <h2>Carteras guardadas</h2>
                 {savedPortfolios.length ? <span>{savedPortfolios.length} en este navegador</span> : null}
               </div>
-              <p>Guarda la composicion actual para reutilizar fondos, ISIN o ticker y pesos mas adelante.</p>
+              <p>Guarda la composición actual para reutilizarla más adelante.</p>
             </div>
 
             <div className="portfolio-controls__bar">
@@ -434,6 +601,7 @@ export default function Home() {
                     }
                   }}
                   placeholder="Nombre para guardar"
+                  aria-label="Nombre de la cartera"
                 />
                 <button type="button" className="btn btn--secondary" onClick={savePortfolio}>
                   Guardar
@@ -459,7 +627,7 @@ export default function Home() {
                       type="button"
                       className="portfolio-item__meta"
                       onClick={() => loadPortfolio(portfolio)}
-                      title="Cargar portfolio"
+                      title="Cargar cartera"
                     >
                       <span className="portfolio-item__name">{portfolio.name}</span>
                       <span className="portfolio-item__count">{portfolio.assets.length} activos</span>
@@ -468,15 +636,15 @@ export default function Home() {
                       type="button"
                       className="portfolio-item__delete"
                       onClick={() => deletePortfolio(portfolio.id)}
-                      title="Eliminar portfolio"
-                      aria-label={`Eliminar portfolio ${portfolio.name}`}
+                      title="Eliminar cartera"
+                      aria-label={`Eliminar cartera ${portfolio.name}`}
                     >
-                      x
+                      ×
                     </button>
                   </div>
                 ))
               ) : (
-                <p className="portfolio-list__empty">Aun no hay portfolios guardados.</p>
+                <p className="portfolio-list__empty">Aún no hay carteras guardadas.</p>
               )}
             </div>
 
@@ -486,166 +654,8 @@ export default function Home() {
               </p>
             )}
           </section>
-
-          <section className="panel-section">
-            <div className="panel-section__header">
-              <h2>Periodo</h2>
-              <p>Define el rango historico que se usara para generar el informe.</p>
-            </div>
-            <div className="fields">
-              <label>
-                Fecha inicial
-                <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-              </label>
-              <label>
-                Fecha final
-                <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-              </label>
-            </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="panel-section__header">
-              <h2>Benchmark</h2>
-              <p>Comparador opcional para el informe. Se usara si introduces un ISIN o ticker.</p>
-            </div>
-            <div className="fields">
-              <label>
-                ISIN o ticker Yahoo
-                <input
-                  value={benchmarkSymbol}
-                  onChange={(event) => setBenchmarkSymbol(event.target.value)}
-                />
-              </label>
-            </div>
-          </section>
         </aside>
-
-        <section className="analysis-column">
-          <section className="panel-section">
-            <div className="panel-title">
-              <div className="panel-section__header panel-section__header--compact">
-                <h2>Portfolio</h2>
-                <p>Los pesos pueden escribirse como porcentaje. Deben sumar 100%.</p>
-              </div>
-              <div className={isWeightValid ? "weight ok" : "weight error"}>
-                {totalWeight.toFixed(2)}%
-              </div>
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ISIN o ticker Yahoo</th>
-                    <th>Peso %</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {assets.map((asset) => (
-                    <tr key={asset.id}>
-                      <td>
-                        <input
-                          className="symbol"
-                          value={asset.symbol}
-                          onChange={(event) => updateAsset(asset.id, "symbol", event.target.value)}
-                          placeholder="ES0112611001 o SGLD.MI"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="number"
-                          value={asset.weight}
-                          onChange={(event) => updateAsset(asset.id, "weight", event.target.value)}
-                          inputMode="decimal"
-                        />
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="icon-button"
-                          onClick={() => removeAsset(asset.id)}
-                          title="Eliminar activo"
-                          aria-label={`Eliminar ${asset.symbol || "activo"}`}
-                        >
-                          x
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="panel-footer">
-              <button type="button" className="btn btn--secondary" onClick={addAsset}>
-                Anadir activo
-              </button>
-            </div>
-          </section>
-
-          {error && <div className="message error-message">{error}</div>}
-
-          <div className="actions">
-            <button type="submit" className="btn btn--primary" disabled={loading || !isWeightValid}>
-              {loading ? "Generando informe..." : "Generar informe"}
-            </button>
-            <button type="button" className="btn btn--secondary" disabled={!result} onClick={downloadReport}>
-              Descargar HTML
-            </button>
-            <button
-              type="button"
-              className="btn btn--secondary"
-              disabled={!result || !reportUrl}
-              onClick={() => reportUrl && window.open(reportUrl, "_blank", "noopener,noreferrer")}
-            >
-              Abrir informe
-            </button>
-          </div>
-        </section>
       </form>
-
-      {result && (
-        <section className="results analysis-column">
-          <div className="summary-bar">
-            <div>
-              <span>Periodo</span>
-              <strong>
-                {result.summary.startDate} - {result.summary.endDate}
-              </strong>
-            </div>
-            <div>
-              <span>Sesiones</span>
-              <strong>{result.summary.sessions}</strong>
-            </div>
-            <div>
-              <span>Monte Carlo mediana</span>
-              <strong>{percent(result.summary.monteCarlo.p50)}</strong>
-            </div>
-          </div>
-
-          {result.warnings.length > 0 && (
-            <div className="message warning-message">
-              {result.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-            </div>
-          )}
-
-          <div className="source-list">
-            {result.assets.map((asset) => (
-              <span key={`${asset.name}-${asset.weight}`}>
-                {asset.name}: {asset.source}
-              </span>
-            ))}
-          </div>
-
-          <div className="message report-message">
-            El informe se ha abierto en una nueva pestana. Si el navegador lo ha bloqueado, usa el boton Abrir informe.
-          </div>
-        </section>
-      )}
     </main>
   );
 }

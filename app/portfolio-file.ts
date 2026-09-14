@@ -4,7 +4,6 @@ export type PortfolioFile = {
   assets: { symbol: string; weight: number }[];
   benchmark: { symbol: string } | null;
   period: { startDate: string; endDate: string | null };
-  currency: "EUR";
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,8 +38,8 @@ export function parsePortfolioFile(text: string): PortfolioFile {
     if (!isRecord(asset)) throw new Error(`El activo ${index + 1} no es valido.`);
     const symbol = typeof asset.symbol === "string" ? asset.symbol.trim() : "";
     if (!symbol) throw new Error(`El activo ${index + 1} necesita un ISIN o ticker.`);
-    if (typeof asset.weight !== "number" || !Number.isFinite(asset.weight) || asset.weight < 0) {
-      throw new Error(`El peso del activo ${index + 1} debe ser un numero no negativo.`);
+    if (typeof asset.weight !== "number" || !Number.isFinite(asset.weight) || asset.weight <= 0 || asset.weight > 100) {
+      throw new Error(`El peso del activo ${index + 1} debe estar entre 0 y 100.`);
     }
     return { symbol, weight: asset.weight };
   });
@@ -71,16 +70,11 @@ export function parsePortfolioFile(text: string): PortfolioFile {
   if (endDate && endDate < startDate) {
     throw new Error("La fecha final no puede ser anterior a la inicial.");
   }
-  if (value.currency !== "EUR") {
-    throw new Error("PortfolioCheck solo admite carteras en EUR.");
-  }
-
   return {
     version: 1,
     name,
     assets,
     benchmark,
-    period: { startDate, endDate },
-    currency: "EUR"
+    period: { startDate, endDate }
   };
 }

@@ -30,7 +30,6 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
             symbol=asset.symbol,
             start=config.start_date,
             end=config.end_date,
-            currency=config.currency,
             label=asset.name,
         )
         label = _unique_label(result.name or asset.symbol, used_labels)
@@ -39,6 +38,7 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
             source=result.source,
             symbol=result.symbol,
             name=label,
+            currency=result.currency,
             warning=result.warning,
         )
         downloaded.append(result)
@@ -49,24 +49,26 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
                 "name": result.name,
                 "symbol": asset.symbol,
                 "source": result.source,
+                "currency": result.currency or "No disponible",
                 "weight": f"{asset.weight:.6f}",
             }
         )
 
-    first_common_date = max(series.returns.first_valid_index() for series in downloaded)
     asset_returns = pd.DataFrame(
         {series.returns.name: series.returns for series in downloaded}
-    ).sort_index()
-    asset_returns = asset_returns.loc[first_common_date:].fillna(0)
+    ).sort_index().dropna()
+    if asset_returns.empty:
+        raise ValueError("No hay fechas comunes suficientes entre los activos.")
 
     weights = pd.Series(
         {series.name: asset.weight for series, asset in zip(downloaded, config.assets, strict=True)},
         dtype=float,
     )
     growth = (1 + asset_returns).cumprod()
-    growth = growth.div(growth.iloc[0])
     value = growth.mul(weights).sum(axis=1)
-    portfolio_returns = value.pct_change().dropna().rename("PortfolioCheck")
+    portfolio_returns = value.pct_change(fill_method=None)
+    portfolio_returns.iloc[0] = value.iloc[0] - 1
+    portfolio_returns = portfolio_returns.dropna().rename("PortfolioCheck")
 
     benchmark_returns = None
     if config.benchmark is not None:
@@ -74,7 +76,6 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
             symbol=config.benchmark.symbol,
             start=str(asset_returns.index[0].date()),
             end=config.end_date,
-            currency=config.currency,
             label=config.benchmark.name,
         )
         benchmark_label = _unique_label(benchmark.name or config.benchmark.symbol, used_labels)
@@ -83,6 +84,7 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
             source=benchmark.source,
             symbol=benchmark.symbol,
             name=benchmark_label,
+            currency=benchmark.currency,
             warning=benchmark.warning,
         )
         if benchmark.warning:
@@ -92,6 +94,7 @@ def build_portfolio(config: AnalysisInput) -> tuple[pd.Series, pd.Series | None,
                 "name": benchmark.name,
                 "symbol": config.benchmark.symbol,
                 "source": benchmark.source,
+                "currency": benchmark.currency or "No disponible",
                 "weight": "benchmark",
             }
         )

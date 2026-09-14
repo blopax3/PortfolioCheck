@@ -117,8 +117,7 @@ The browser can import and export portable portfolio configurations with this fo
     { "symbol": "SGLD.MI", "weight": 40 }
   ],
   "benchmark": { "symbol": "^STOXX50E" },
-  "period": { "startDate": "2015-01-01", "endDate": null },
-  "currency": "EUR"
+  "period": { "startDate": "2015-01-01", "endDate": null }
 }
 ```
 
@@ -142,8 +141,7 @@ Example request:
     "symbol": "SGLD.MI"
   },
   "startDate": "2015-01-01",
-  "endDate": null,
-  "currency": "EUR"
+  "endDate": null
 }
 ```
 
@@ -151,8 +149,9 @@ Notes:
 
 - `symbol` can be a real ISIN or a Yahoo Finance ticker.
 - Asset and benchmark names are resolved from Morningstar or Yahoo Finance when available. The API still accepts `name` as a compatibility fallback.
-- Weights can be sent as percentages (`50`) or decimals (`0.5`).
+- Weights are sent as percentages (`50` means 50%).
 - Valid ISINs are resolved through Morningstar; Yahoo symbols are sent directly to Yahoo Finance.
+- Each asset keeps its own listing currency; PortfolioCheck does not convert currencies.
 - Monte Carlo uses 126 trading sessions and 1,000 simulations by default.
 - The response includes the generated HTML report, summary metrics, data sources used for each asset, and fallback warnings.
 

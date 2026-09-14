@@ -36,6 +36,7 @@ def _portfolio_section(config, assets: list[dict[str, str]]) -> str:
           <td>{_escape(asset["symbol"])}</td>
           <td>{float(asset["weight"]):.2%}</td>
           <td>{_escape(asset["source"])}</td>
+          <td>{_escape(asset["currency"])}</td>
         </tr>
         """
         for asset in asset_rows
@@ -50,6 +51,7 @@ def _portfolio_section(config, assets: list[dict[str, str]]) -> str:
             <strong>{_escape(benchmark["name"])}</strong>
             <span>{_escape(benchmark["symbol"])}</span>
             <em>Fuente: {_escape(benchmark["source"])}</em>
+            <em>Divisa: {_escape(benchmark["currency"])}</em>
           </p>
         </div>
         """
@@ -67,7 +69,7 @@ def _portfolio_section(config, assets: list[dict[str, str]]) -> str:
       <h2>Cartera introducida</h2>
       <p class="pc-period">
         Periodo solicitado: {_escape(config.start_date)} - {_escape(end_date)}.
-        Moneda Morningstar: {_escape(config.currency)}.
+        Cada activo conserva su propia divisa de cotizacion; no se realiza conversion.
       </p>
       <table class="pc-table">
         <thead>
@@ -76,6 +78,7 @@ def _portfolio_section(config, assets: list[dict[str, str]]) -> str:
             <th>ISIN / ticker introducido</th>
             <th>Peso</th>
             <th>Fuente usada</th>
+            <th>Divisa del activo</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -145,7 +148,7 @@ def _monte_carlo_section(returns, config, summary, chart: str) -> str:
 
     return f"""
     <section class="montecarlo">
-      <h2>Prediccion Monte Carlo</h2>
+      <h2>Simulacion de escenarios Monte Carlo</h2>
       <p>
         Simulacion de {config.simulations:,} trayectorias durante {config.sessions}
         sesiones bursatiles, calibrada con retornos diarios entre {start} y {end}.
@@ -172,20 +175,19 @@ def _monte_carlo_section(returns, config, summary, chart: str) -> str:
 def _report_header(config, assets: list[dict[str, str]], returns) -> str:
     benchmark = next((asset for asset in assets if asset.get("weight") == "benchmark"), None)
     benchmark_name = benchmark["name"] if benchmark else "Sin benchmark"
-    asset_count = sum(asset.get("weight") != "benchmark" for asset in assets)
+    portfolio_assets = [asset for asset in assets if asset.get("weight") != "benchmark"]
+    currencies = ", ".join(sorted({asset["currency"] for asset in portfolio_assets}))
 
     return f"""
     <header class="pc-report-header">
       <p class="pc-brand">PortfolioCheck</p>
-      <h1>Informe de rentabilidad y riesgo</h1>
-      <p class="pc-report-intro">Resumen histórico de la cartera, riesgo y escenarios probabilísticos.</p>
+      <h1>{_escape(config.name)}</h1>
+      <p class="pc-report-intro">Informe de rentabilidad y riesgo</p>
       <dl class="pc-report-meta">
         <div><dt>Periodo</dt><dd>{returns.index[0]:%d/%m/%Y} — {returns.index[-1]:%d/%m/%Y}</dd></div>
         <div><dt>Benchmark</dt><dd>{_escape(benchmark_name)}</dd></div>
-        <div><dt>Moneda</dt><dd>{_escape(config.currency)}</dd></div>
-        <div><dt>Composición</dt><dd>{asset_count} activo{'s' if asset_count != 1 else ''}</dd></div>
-        <div><dt>Sesiones/año</dt><dd>252</dd></div>
-        <div><dt>Tipo sin riesgo</dt><dd>0,00 %</dd></div>
+        <div><dt>Composición</dt><dd>{len(portfolio_assets)} activo{'s' if len(portfolio_assets) != 1 else ''}</dd></div>
+        <div><dt>Divisas</dt><dd>{_escape(currencies or 'No disponible')}</dd></div>
       </dl>
     </header>
     """
@@ -214,35 +216,37 @@ def _insert_section(html: str, header: str, section: str, footer: str) -> str:
         box-sizing: border-box;
         margin: 0 auto 28px;
         padding: 32px;
-        border-radius: 14px;
-        background: linear-gradient(135deg, #073b66, #0b67a3);
-        box-shadow: 0 12px 30px rgba(7, 59, 102, .18);
-        color: white;
+        border: 1px solid #d9e2ec;
+        border-top: 4px solid #4a90b8;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(36, 59, 83, .08);
+        color: #243b53;
       }
       .pc-brand {
         margin: 0 0 8px;
-        color: #9ed8ff;
+        color: #3b7ea5;
         font-size: 12px;
         font-weight: 700;
         letter-spacing: .12em;
         text-transform: uppercase;
       }
       .pc-report-header h1 { margin: 0; font-size: 30px; font-weight: 700; }
-      .pc-report-intro { margin: 8px 0 24px; color: #d9efff; font-size: 14px; }
+      .pc-report-intro { margin: 8px 0 24px; color: #627d98; font-size: 14px; }
       .pc-report-meta {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         gap: 10px;
         margin: 0;
       }
       .pc-report-meta div {
         min-width: 0;
         padding: 11px 12px;
-        border: 1px solid rgba(255,255,255,.2);
+        border: 1px solid #d9e2ec;
         border-radius: 7px;
-        background: rgba(255,255,255,.08);
+        background: #f8fbff;
       }
-      .pc-report-meta dt { color: #9ed8ff; font-size: 10px; text-transform: uppercase; }
+      .pc-report-meta dt { color: #627d98; font-size: 10px; text-transform: uppercase; }
       .pc-report-meta dd { overflow-wrap: anywhere; margin: 3px 0 0; font-weight: 700; }
       .montecarlo {
         box-sizing: border-box;

@@ -9,8 +9,7 @@ const portfolio = parsePortfolioFile(JSON.stringify({
     { symbol: "SGLD.MI", weight: 40 }
   ],
   benchmark: { symbol: "^STOXX50E" },
-  period: { startDate: "2015-01-01", endDate: null },
-  currency: "EUR"
+  period: { startDate: "2015-01-01", endDate: null }
 }));
 
 assert.equal(portfolio.assets.length, 2);
